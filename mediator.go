@@ -6,53 +6,46 @@ import (
 	"reflect"
 )
 
-var (
-	_ Sender    = NewMediator()
-	_ Publisher = NewMediator()
-)
-
 type RequestHandlerFunc func(ctx context.Context, request interface{}) (interface{}, error)
-
-type PipelineBehavior interface {
-	Handle(ctx context.Context, request interface{}, next RequestHandlerFunc) (interface{}, error)
-}
 
 type RequestHandler[TRequest any, TResponse any] interface {
 	Handle(ctx context.Context, request TRequest) (TResponse, error)
 }
 
-type Sender interface {
-	Send(ctx context.Context, request interface{}) (interface{}, error)
+type NotificationHandler[TNotification any] interface {
+	Handle(ctx context.Context, notification TNotification) error
 }
 
-type Publisher interface {
-	Publish(ctx context.Context, notification interface{})
+type PipelineBehavior interface {
+	Handle(ctx context.Context, request interface{}, next RequestHandlerFunc) (interface{}, error)
 }
 
 type Mediator struct {
-	handlers          map[reflect.Type]interface{}
-	pipelineBehaviors []PipelineBehavior
+	requestHandlers      map[reflect.Type]interface{}
+	notificationHandlers map[reflect.Type][]interface{}
+	pipelineBehaviors    []PipelineBehavior
 }
 
 func NewMediator() *Mediator {
 	return &Mediator{
-		handlers: make(map[reflect.Type]interface{}),
+		requestHandlers:      make(map[reflect.Type]interface{}),
+		notificationHandlers: make(map[reflect.Type][]interface{}),
+		pipelineBehaviors:    []PipelineBehavior{},
 	}
 }
 
-func RegisterNewRequestHandler[TRequest any, TResponse any](
+func RegisterRequestHandler[TRequest any, TResponse any](
 	m *Mediator,
 	handler RequestHandler[TRequest, TResponse],
 ) error {
 	var request TRequest
 	requestType := reflect.TypeOf(request)
 
-	if _, contains := m.handlers[requestType]; contains {
-		return fmt.Errorf("handler for %s already registered", requestType.String())
+	if _, contains := m.requestHandlers[requestType]; contains {
+		return fmt.Errorf("handler for request type '%s' is already registered", requestType.String())
 	}
 
-	m.handlers[requestType] = handler
-
+	m.requestHandlers[requestType] = handler
 	return nil
 }
 
@@ -60,26 +53,38 @@ func (m *Mediator) RegisterPipelineBehavior(pipelineBehavior PipelineBehavior) {
 	m.pipelineBehaviors = append(m.pipelineBehaviors, pipelineBehavior)
 }
 
-func (m *Mediator) Send(ctx context.Context, request interface{}) (interface{}, error) {
-	panic("TODO: implement Mediator.Send")
-}
+func RegisterNotificationHandler[TNotification any](
+	m *Mediator,
+	handler NotificationHandler[TNotification],
+) {
+	var notification TNotification
+	notificationType := reflect.TypeOf(notification)
 
-func (m *Mediator) Publish(ctx context.Context, notification interface{}) {
-	panic("TODO: implement Mediator.Publish")
+	m.notificationHandlers[notificationType] = append(
+		m.notificationHandlers[notificationType],
+		handler,
+	)
 }
 
 func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request TRequest) (TResponse, error) {
 	requestType := reflect.TypeOf(request)
 
 	var response TResponse
-	handler, registered := m.handlers[requestType]
+	handler, registered := m.requestHandlers[requestType]
 	if !registered {
-		return response, fmt.Errorf("handlers for type %s is not registered", requestType.String())
+		return response, fmt.Errorf(
+			"request handler for request type '%s' is not registered", requestType.String(),
+		)
 	}
 
 	typedRequestHandler, ok := handler.(RequestHandler[TRequest, TResponse])
 	if !ok {
-		return response, fmt.Errorf("failed to convert converter %s", reflect.TypeOf(handler).String())
+		return response, fmt.Errorf(
+			"failed to convert handler '%s' to typed handler 'RequestHandler[%s, %s]'",
+			typeName(handler),
+			typeName(request),
+			typeName(response),
+		)
 	}
 
 	numBehaviors := len(m.pipelineBehaviors)
@@ -91,9 +96,9 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 		typedRequest, ok := req.(TRequest)
 		if !ok {
 			return response, fmt.Errorf(
-				"incorrect request type expected %s got %s",
-				reflect.TypeOf(req).String(),
-				reflect.TypeOf(request).String(),
+				"incorrect request type expected '%s' got '%s'",
+				typeName(req),
+				typeName(request),
 			)
 		}
 		return typedRequestHandler.Handle(ctx, typedRequest)
@@ -102,6 +107,8 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 	for i := numBehaviors - 1; i >= 0; i-- {
 		pipeline := m.pipelineBehaviors[i]
 
+		// Create new behavior through a func to avoid infinite loops of self-reference.
+		// Passing in the parameters through the function avoids that.
 		behavior = func(pipelineBehavior PipelineBehavior, next RequestHandlerFunc) RequestHandlerFunc {
 			return func(ctx context.Context, request interface{}) (interface{}, error) {
 				return pipeline.Handle(ctx, request, next)
@@ -117,15 +124,40 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 	response, ok = untypedResponse.(TResponse)
 	if !ok {
 		return response, fmt.Errorf(
-			"failed to convert response of type %s to type %s",
-			reflect.TypeOf(untypedResponse).String(),
-			reflect.TypeOf(response).String(),
+			"failed to convert response of type '%s' to type '%s'",
+			typeName(untypedResponse),
+			typeName(response),
 		)
 	}
 
 	return response, nil
 }
 
-func Publish[TNotification any](m *Mediator, notification TNotification) {
-	panic("TODO: implement Publish")
+func Publish[TNotification any](m *Mediator, ctx context.Context, notification TNotification) error {
+	notificationType := reflect.TypeOf(notification)
+
+	handlers := m.notificationHandlers[notificationType]
+
+	if len(handlers) < 1 {
+		return nil
+	}
+
+	var aggregateError error
+	for _, handler := range handlers {
+		typedHandler, _ := handler.(NotificationHandler[TNotification])
+		if err := typedHandler.Handle(ctx, notification); err != nil {
+			// Poor "substitute" for actual aggregate errors.
+			aggregateError = fmt.Errorf(
+				"failed to execute notification handler '%s' with error: %w",
+				typeName(typedHandler),
+				err,
+			)
+		}
+	}
+
+	return aggregateError
+}
+
+func typeName(obj interface{}) string {
+	return reflect.TypeOf(obj).String()
 }
