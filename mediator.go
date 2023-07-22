@@ -2,11 +2,12 @@ package mediator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 )
 
-type RequestHandlerFunc func(ctx context.Context, request interface{}) (interface{}, error)
+type RequestHandlerFunc func(ctx context.Context, request any) (any, error)
 
 type RequestHandler[TRequest any, TResponse any] interface {
 	Handle(ctx context.Context, request TRequest) (TResponse, error)
@@ -17,60 +18,48 @@ type NotificationHandler[TNotification any] interface {
 }
 
 type PipelineBehavior interface {
-	Handle(ctx context.Context, request interface{}, next RequestHandlerFunc) (interface{}, error)
+	Handle(ctx context.Context, request any, next RequestHandlerFunc) (any, error)
 }
 
-type Mediator struct {
-	requestHandlers      map[reflect.Type]interface{}
-	notificationHandlers map[reflect.Type][]interface{}
-	pipelineBehaviors    []PipelineBehavior
-}
-
-func NewMediator() *Mediator {
-	return &Mediator{
-		requestHandlers:      make(map[reflect.Type]interface{}),
-		notificationHandlers: make(map[reflect.Type][]interface{}),
-		pipelineBehaviors:    []PipelineBehavior{},
-	}
-}
+var (
+	requestHandlers      map[reflect.Type]any   = make(map[reflect.Type]any)
+	notificationHandlers map[reflect.Type][]any = make(map[reflect.Type][]any)
+	pipelineBehaviors                           = []PipelineBehavior{}
+)
 
 func RegisterRequestHandler[TRequest any, TResponse any](
-	m *Mediator,
 	handler RequestHandler[TRequest, TResponse],
 ) error {
 	var request TRequest
 	requestType := reflect.TypeOf(request)
 
-	if _, contains := m.requestHandlers[requestType]; contains {
+	if _, contains := requestHandlers[requestType]; contains {
 		return fmt.Errorf("handler for request type '%s' is already registered", requestType.String())
 	}
 
-	m.requestHandlers[requestType] = handler
+	requestHandlers[requestType] = handler
 	return nil
 }
 
-func (m *Mediator) RegisterPipelineBehavior(pipelineBehavior PipelineBehavior) {
-	m.pipelineBehaviors = append(m.pipelineBehaviors, pipelineBehavior)
+func RegisterPipelineBehavior(pipelineBehavior PipelineBehavior) {
+	pipelineBehaviors = append(pipelineBehaviors, pipelineBehavior)
 }
 
-func RegisterNotificationHandler[TNotification any](
-	m *Mediator,
-	handler NotificationHandler[TNotification],
-) {
+func RegisterNotificationHandler[TNotification any](handler NotificationHandler[TNotification]) {
 	var notification TNotification
 	notificationType := reflect.TypeOf(notification)
 
-	m.notificationHandlers[notificationType] = append(
-		m.notificationHandlers[notificationType],
+	notificationHandlers[notificationType] = append(
+		notificationHandlers[notificationType],
 		handler,
 	)
 }
 
-func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request TRequest) (TResponse, error) {
+func Send[TRequest any, TResponse any](ctx context.Context, request TRequest) (TResponse, error) {
 	requestType := reflect.TypeOf(request)
 
 	var response TResponse
-	handler, registered := m.requestHandlers[requestType]
+	handler, registered := requestHandlers[requestType]
 	if !registered {
 		return response, fmt.Errorf(
 			"request handler for request type '%s' is not registered", requestType.String(),
@@ -87,12 +76,12 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 		)
 	}
 
-	numBehaviors := len(m.pipelineBehaviors)
+	numBehaviors := len(pipelineBehaviors)
 	if numBehaviors < 1 {
 		return typedRequestHandler.Handle(ctx, request)
 	}
 
-	var behavior RequestHandlerFunc = func(ctx context.Context, req interface{}) (interface{}, error) {
+	var behavior RequestHandlerFunc = func(ctx context.Context, req any) (any, error) {
 		typedRequest, ok := req.(TRequest)
 		if !ok {
 			return response, fmt.Errorf(
@@ -105,12 +94,12 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 	}
 
 	for i := numBehaviors - 1; i >= 0; i-- {
-		pipeline := m.pipelineBehaviors[i]
+		pipeline := pipelineBehaviors[i]
 
 		// Create new behavior through a func to avoid infinite loops of self-reference.
 		// Passing in the parameters through the function avoids that.
 		behavior = func(pipelineBehavior PipelineBehavior, next RequestHandlerFunc) RequestHandlerFunc {
-			return func(ctx context.Context, request interface{}) (interface{}, error) {
+			return func(ctx context.Context, request any) (any, error) {
 				return pipeline.Handle(ctx, request, next)
 			}
 		}(pipeline, behavior)
@@ -133,10 +122,10 @@ func Send[TRequest any, TResponse any](m *Mediator, ctx context.Context, request
 	return response, nil
 }
 
-func Publish[TNotification any](m *Mediator, ctx context.Context, notification TNotification) error {
+func Publish[TNotification any](ctx context.Context, notification TNotification) error {
 	notificationType := reflect.TypeOf(notification)
 
-	handlers := m.notificationHandlers[notificationType]
+	handlers := notificationHandlers[notificationType]
 
 	if len(handlers) < 1 {
 		return nil
@@ -147,17 +136,18 @@ func Publish[TNotification any](m *Mediator, ctx context.Context, notification T
 		typedHandler, _ := handler.(NotificationHandler[TNotification])
 		if err := typedHandler.Handle(ctx, notification); err != nil {
 			// Poor "substitute" for actual aggregate errors.
-			aggregateError = fmt.Errorf(
+			handleErr := fmt.Errorf(
 				"failed to execute notification handler '%s' with error: %w",
 				typeName(typedHandler),
 				err,
 			)
+			aggregateError = errors.Join(handleErr, aggregateError)
 		}
 	}
 
 	return aggregateError
 }
 
-func typeName(obj interface{}) string {
+func typeName(obj any) string {
 	return reflect.TypeOf(obj).String()
 }
