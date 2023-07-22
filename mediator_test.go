@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// General tests
-
-func Test_NewMediator_Does_Not_Return_Nil(t *testing.T) {
-	m := NewMediator()
-	if m == nil {
-		t.Errorf("NewMediator returned nil")
-	}
-}
 
 // Handler tests
 
@@ -34,54 +26,54 @@ func (h *TestHandler[TRequest, TResponse]) Handle(_ context.Context, request TRe
 
 func Test_RegisterRequestHandler_Stores_Registered_Handler(t *testing.T) {
 	// Arrange
-	m := NewMediator()
 	testHandler := TestHandler[string, string]{}
 
 	// Act
-	err := RegisterRequestHandler[string, string](m, &testHandler)
+	err := RegisterRequestHandler[string, string](&testHandler)
 
 	// Assert
 	if err != nil {
 		t.Errorf("failed to register handler: %s", err.Error())
 	}
 
-	if len(m.requestHandlers) != 1 {
+	if len(requestHandlers) != 1 {
 		t.Errorf(
 			"mediator.requestHandlers length '%d' does not match the expected length '%d' after registering a handler",
-			len(m.requestHandlers),
+			len(requestHandlers),
 			1,
 		)
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 func Test_RegisterRequestHandler_Stores_Registered_Handler_Of_Struct_Type(t *testing.T) {
 	// Arrange
-	m := NewMediator()
 	testHandler := TestHandler[TestRequest, TestRequest]{}
 
 	// Act
-	err := RegisterRequestHandler[TestRequest, TestRequest](m, &testHandler)
+	err := RegisterRequestHandler[TestRequest, TestRequest](&testHandler)
 
 	// Assert
 	if err != nil {
 		t.Errorf("failed to register handler: %s", err.Error())
 	}
 
-	if len(m.requestHandlers) != 1 {
+	if len(requestHandlers) != 1 {
 		t.Errorf(
 			"mediator.requestHandlers length '%d' does not match the expected length '%d' after registering a handler",
-			len(m.requestHandlers),
+			len(requestHandlers),
 			1,
 		)
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 func Test_RegisterRequestHandler_Returns_Error_When_Registering_Handler_For_Already_Registered_Request_Type(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	testHandler := TestHandler[string, string]{}
-	err := RegisterRequestHandler[string, string](m, &testHandler)
+	err := RegisterRequestHandler[string, string](&testHandler)
 	if err != nil {
 		t.Errorf("failed to register handler: %s", err.Error())
 	}
@@ -89,7 +81,7 @@ func Test_RegisterRequestHandler_Returns_Error_When_Registering_Handler_For_Alre
 	testHandler2 := TestHandler[string, string]{}
 
 	// Act
-	err = RegisterRequestHandler[string, string](m, &testHandler2)
+	err = RegisterRequestHandler[string, string](&testHandler2)
 
 	// Assert
 	if err == nil {
@@ -98,24 +90,24 @@ func Test_RegisterRequestHandler_Returns_Error_When_Registering_Handler_For_Alre
 		)
 	}
 
-	if len(m.requestHandlers) != 1 {
+	if len(requestHandlers) != 1 {
 		t.Errorf(
 			"mediator.pipelineBehaviors length '%d' does not match the expected value '%d' after trying to register a second pipeline behavior with same request type",
-			len(m.pipelineBehaviors),
+			len(pipelineBehaviors),
 			1,
 		)
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 func Test_Send_Executes_Registered_Handler_For_Given_Request_Type(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	testHandler := TestHandler[string, string]{}
-	_ = RegisterRequestHandler[string, string](m, &testHandler)
+	_ = RegisterRequestHandler[string, string](&testHandler)
 
 	// Act
-	_, err := Send[string, string](m, context.Background(), "value")
+	_, err := Send[string, string](context.Background(), "value")
 
 	// Assert
 	if err != nil {
@@ -125,17 +117,17 @@ func Test_Send_Executes_Registered_Handler_For_Given_Request_Type(t *testing.T) 
 	if !testHandler.executed {
 		t.Error("failed to execute registered handler")
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 func Test_Send_Executes_Registered_Handler_For_Given_Request_Type_With_Struct_Request_Type(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	testHandler := TestHandler[TestRequest, TestRequest]{}
-	_ = RegisterRequestHandler[TestRequest, TestRequest](m, &testHandler)
+	_ = RegisterRequestHandler[TestRequest, TestRequest](&testHandler)
 
 	// Act
-	_, err := Send[TestRequest, TestRequest](m, context.Background(), TestRequest{value: "value"})
+	_, err := Send[TestRequest, TestRequest](context.Background(), TestRequest{value: "value"})
 
 	// Assert
 	if err != nil {
@@ -145,22 +137,24 @@ func Test_Send_Executes_Registered_Handler_For_Given_Request_Type_With_Struct_Re
 	if !testHandler.executed {
 		t.Error("failed to execute registered handler")
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 func Test_Send_Returns_Error_When_Sending_Request_Type_Without_A_Matching_Registered_Handler(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	testHandler := TestHandler[TestRequest, TestRequest]{}
-	_ = RegisterRequestHandler[TestRequest, TestRequest](m, &testHandler)
+	_ = RegisterRequestHandler[TestRequest, TestRequest](&testHandler)
 
 	// Act
-	_, err := Send[string, string](m, context.Background(), "value")
+	_, err := Send[string, string](context.Background(), "value")
 
 	// Assert
 	if err == nil {
 		t.Error("did not receive expected error on sending a request without registering a matching handler")
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
 }
 
 // Pipeline tests
@@ -181,49 +175,50 @@ func (b *TestPipelineBehavior) Handle(
 
 func Test_RegisterPipelineBehavior_Appends_Behavior_Instance_To_Mediator(t *testing.T) {
 	// Arrange
-	m := NewMediator()
 	testHandler := TestHandler[string, string]{}
 
-	err := RegisterRequestHandler[string, string](m, &testHandler)
+	err := RegisterRequestHandler[string, string](&testHandler)
 	if err != nil {
 		t.Errorf("failed to register handler %s", err.Error())
 	}
 
 	pipelineBehaviorInner := TestPipelineBehavior{}
-	m.RegisterPipelineBehavior(&pipelineBehaviorInner)
+	RegisterPipelineBehavior(&pipelineBehaviorInner)
 
-	if len(m.pipelineBehaviors) != 1 {
+	if len(pipelineBehaviors) != 1 {
 		t.Errorf(
 			"mediator.pipelineBehaviors length '%d' does not match the expected value '%d' after registering a pipeline behavior",
-			len(m.pipelineBehaviors),
+			len(pipelineBehaviors),
 			1,
 		)
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
+	pipelineBehaviors = make([]PipelineBehavior, 0)
 }
 
 func Test_PipelineBehavior_First_Registered_Gets_Executed_First(t *testing.T) {
 	// Arrange
-	m := NewMediator()
 	testHandler := TestHandler[string, string]{}
 
-	err := RegisterRequestHandler[string, string](m, &testHandler)
+	err := RegisterRequestHandler[string, string](&testHandler)
 	if err != nil {
 		t.Errorf("failed to register handler %s", err.Error())
 	}
 
 	appendValueInner := "append1"
 	pipelineBehaviorInner := TestPipelineBehavior{valueToAppend: appendValueInner}
-	m.RegisterPipelineBehavior(&pipelineBehaviorInner)
+	RegisterPipelineBehavior(&pipelineBehaviorInner)
 
 	appendValueOuter := "append2"
 	pipelineBehaviorOuter := TestPipelineBehavior{valueToAppend: appendValueOuter}
-	m.RegisterPipelineBehavior(&pipelineBehaviorOuter)
+	RegisterPipelineBehavior(&pipelineBehaviorOuter)
 
 	ctx := context.Background()
 	request := "Hello, World!"
 
 	// Act
-	response, err := Send[string, string](m, ctx, request)
+	response, err := Send[string, string](ctx, request)
 
 	// Assert
 	if err != nil {
@@ -238,6 +233,9 @@ func Test_PipelineBehavior_First_Registered_Gets_Executed_First(t *testing.T) {
 	if response != expected {
 		t.Errorf("unexpected response %s", response)
 	}
+
+	requestHandlers = make(map[reflect.Type]any)
+	pipelineBehaviors = make([]PipelineBehavior, 0)
 }
 
 type TestContextPipelineBehavior struct {
@@ -270,8 +268,6 @@ type CTXKey string
 
 func Test_PipelineBehavior_Context_Preserved_Over_Execution(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	const (
 		contextKey CTXKey = "key"
 		contextVal string = "value"
@@ -287,7 +283,7 @@ func Test_PipelineBehavior_Context_Preserved_Over_Execution(t *testing.T) {
 		}
 	}}
 
-	err := RegisterRequestHandler[string, string](m, &testHandler)
+	err := RegisterRequestHandler[string, string](&testHandler)
 	if err != nil {
 		t.Errorf("failed to register handler %s", err.Error())
 	}
@@ -297,21 +293,23 @@ func Test_PipelineBehavior_Context_Preserved_Over_Execution(t *testing.T) {
 	}
 
 	pipelineBehaviorInner := TestContextPipelineBehavior{onHandle: onPipeline}
-	m.RegisterPipelineBehavior(&pipelineBehaviorInner)
+	RegisterPipelineBehavior(&pipelineBehaviorInner)
 
 	pipelineBehaviorOuter := TestContextPipelineBehavior{}
-	m.RegisterPipelineBehavior(&pipelineBehaviorOuter)
+	RegisterPipelineBehavior(&pipelineBehaviorOuter)
 
 	ctx := context.Background()
 	request := "Hello, World!"
 
 	// Act
-	_, err = Send[string, string](m, ctx, request)
+	_, err = Send[string, string](ctx, request)
 
 	// Assert
 	if err != nil {
 		t.Errorf("failed to send")
 	}
+
+	pipelineBehaviors = make([]PipelineBehavior, 0)
 }
 
 // Notification tests
@@ -332,26 +330,24 @@ func (h *TestNotificationHandler[TNotification]) Handle(_ context.Context, notif
 
 func Test_RegisterNotificationHandler_Appends_Handler_To_Mediator(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	handler := TestNotificationHandler[string]{}
 
 	// Act
-	RegisterNotificationHandler[string](m, &handler)
+	RegisterNotificationHandler[string](&handler)
 
 	// Assert
 	var notification string
-	notificationHandlersNum := len(m.notificationHandlers[reflect.TypeOf(notification)])
+	notificationHandlersNum := len(notificationHandlers[reflect.TypeOf(notification)])
 
 	if notificationHandlersNum != 1 {
 		t.Errorf("expected '%d' handlers, found '%d'", 1, notificationHandlersNum)
 	}
+
+	notificationHandlers = make(map[reflect.Type][]any)
 }
 
 func Test_RegisterNotificationHandler_Appends_Multiple_Handlers_For_Same_Notification_Type_To_Mediator(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	handlers := []TestNotificationHandler[string]{
 		{},
 		{},
@@ -362,22 +358,22 @@ func Test_RegisterNotificationHandler_Appends_Multiple_Handlers_For_Same_Notific
 
 	// Act
 	for _, handler := range handlers {
-		RegisterNotificationHandler[string](m, &handler)
+		RegisterNotificationHandler[string](&handler)
 	}
 
 	// Assert
 	var notification string
-	notificationHandlersNum := len(m.notificationHandlers[reflect.TypeOf(notification)])
+	notificationHandlersNum := len(notificationHandlers[reflect.TypeOf(notification)])
 
 	if notificationHandlersNum != len(handlers) {
 		t.Errorf("expected '%d' handlers, found '%d'", 1, notificationHandlersNum)
 	}
+
+	notificationHandlers = make(map[reflect.Type][]any)
 }
 
 func Test_Publish_Publishes_To_All_Registered_Notification_Handlers(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	handlers := []TestNotificationHandler[string]{
 		{},
 		{},
@@ -387,13 +383,13 @@ func Test_Publish_Publishes_To_All_Registered_Notification_Handlers(t *testing.T
 	}
 
 	for i := 0; i < len(handlers); i++ {
-		RegisterNotificationHandler[string](m, &handlers[i])
+		RegisterNotificationHandler[string](&handlers[i])
 	}
 
 	notification := "value"
 
 	// Act
-	err := Publish[string](m, context.Background(), notification)
+	err := Publish[string](context.Background(), notification)
 
 	// Assert
 	if err != nil {
@@ -409,12 +405,12 @@ func Test_Publish_Publishes_To_All_Registered_Notification_Handlers(t *testing.T
 			)
 		}
 	}
+
+	notificationHandlers = make(map[reflect.Type][]any)
 }
 
 func Test_Publish_Continues_Publishing_After_Receiving_Error_From_Handler(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	expectedErr := fmt.Errorf("EXPLOSIONS, MAYHEM, OTHER BAD STUFF")
 	handlers := []TestNotificationHandler[string]{
 		{},
@@ -425,13 +421,13 @@ func Test_Publish_Continues_Publishing_After_Receiving_Error_From_Handler(t *tes
 	}
 
 	for i := 0; i < len(handlers); i++ {
-		RegisterNotificationHandler[string](m, &handlers[i])
+		RegisterNotificationHandler[string](&handlers[i])
 	}
 
 	notification := "value"
 
 	// Act
-	err := Publish[string](m, context.Background(), notification)
+	err := Publish[string](context.Background(), notification)
 
 	// Assert
 	if err == nil {
@@ -455,16 +451,16 @@ func Test_Publish_Continues_Publishing_After_Receiving_Error_From_Handler(t *tes
 			)
 		}
 	}
+
+	notificationHandlers = make(map[reflect.Type][]any)
 }
 
 func Test_Publish_Does_Not_Return_Error_If_No_Handlers_Found(t *testing.T) {
 	// Arrange
-	m := NewMediator()
-
 	notification := "value"
 
 	// Act
-	err := Publish[string](m, context.Background(), notification)
+	err := Publish[string](context.Background(), notification)
 
 	// Assert
 	if err != nil {
