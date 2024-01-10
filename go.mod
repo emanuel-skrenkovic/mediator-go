@@ -1,3 +1,3 @@
-module github.com/eskrenkovic/mediator-go
+module github.com/emanuel-skrenkovic/mediator-go
 
 go 1.20
